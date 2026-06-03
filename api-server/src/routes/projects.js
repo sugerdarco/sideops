@@ -11,7 +11,7 @@ export const projectsRouter = Router();
   * returns - {projectId, status : queued, url : string}
   */
 projectsRouter.post("/", async (req, res) => {
-  const git_url = req.body ?? {};
+  const git_url = req.body?.git_url;
 
   if (!git_url || typeof git_url !== "string") {
     return res.status(400).json({ error: "`git_url` is required and must be a string" });
@@ -93,7 +93,7 @@ projectsRouter.get("/:id/logs", async (req, res) => {
   // keep-alive heartbeat every 20 sec (prevets proxy / browser timeout)
   const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 2000);
 
-  const channel = `logs:{id}`;
+  const channel = `logs:${id}`;
   const sub = getSubcriber();
 
   const onMessage = (ch, raw) => {

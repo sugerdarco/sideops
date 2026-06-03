@@ -1,0 +1,97 @@
+# ── IAM Policies for SideOps ──────────────────────────────────────────────────
+#
+# Apply these via the AWS Console, CLI, or Terraform.
+# Replace <S3_BUCKET_NAME> and <ACCOUNT_ID> everywhere.
+
+# ── 1. ECS Task Role Policy (build-worker writes to S3) ───────────────────────
+#
+# Attach to: arn:aws:iam::<ACCOUNT_ID>:role/sideops-build-task-role
+#
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Sid": "AllowS3Write",
+#       "Effect": "Allow",
+#       "Action": [
+#         "s3:PutObject",
+#         "s3:PutObjectAcl",
+#         "s3:AbortMultipartUpload"
+#       ],
+#       "Resource": "arn:aws:s3:::<S3_BUCKET_NAME>/*"
+#     }
+#   ]
+# }
+
+
+# ── 2. Reverse Proxy IAM Policy (Caddy server reads from S3) ──────────────────
+#
+# Attach to the EC2 instance role or ECS task role that runs Caddy.
+#
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Sid": "AllowS3Read",
+#       "Effect": "Allow",
+#       "Action": [
+#         "s3:GetObject",
+#         "s3:HeadObject",
+#         "s3:ListBucket"
+#       ],
+#       "Resource": [
+#         "arn:aws:s3:::<S3_BUCKET_NAME>",
+#         "arn:aws:s3:::<S3_BUCKET_NAME>/*"
+#       ]
+#     }
+#   ]
+# }
+
+
+# ── 3. ECS Execution Role (needed by Fargate to pull image + secrets) ─────────
+#
+# Attach AWS managed policy: arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+#
+# Plus this custom statement to read the Redis URL secret:
+#
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Sid": "ReadRedisSecret",
+#       "Effect": "Allow",
+#       "Action": [
+#         "secretsmanager:GetSecretValue"
+#       ],
+#       "Resource": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:sideops/redis-url*"
+#     }
+#   ]
+# }
+
+
+# ── 4. S3 Bucket Policy (block all public access — proxy only) ────────────────
+#
+# Run once after creating the bucket:
+#
+# aws s3api put-public-access-block \
+#   --bucket <S3_BUCKET_NAME> \
+#   --public-access-block-configuration \
+#     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+
+# ── 5. Trigger an ECS task per build (API server side) ───────────────────────
+#
+# The current architecture uses the build-worker as a long-lived BullMQ worker
+# in local dev, and ECS_TASK_MODE=true for ECS.
+#
+# To trigger a NEW ECS task per build job instead of a worker pool,
+# call RunTask from the API server after enqueuing the BullMQ job:
+#
+# aws ecs run-task \
+#   --cluster sideops \
+#   --task-definition sideops-build-worker \
+#   --launch-type FARGATE \
+#   --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx]}"
+#
+# The task pulls exactly ONE job (ECS_TASK_MODE=true), completes, then exits.
+# ECS does not restart it — fulfilling the "self-destruct" requirement.

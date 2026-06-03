@@ -28,7 +28,7 @@ export function getProject(id) {
 }
 
 export function setProjectStatus(id, status) {
-  const p = map.get(id);
+  const p = store.get(id);
 
   if (p) {
     p.status = status;

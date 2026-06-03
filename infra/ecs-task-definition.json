@@ -1,0 +1,49 @@
+{
+  "family": "sideops-build-worker",
+  "comment": "Replace ALL <placeholder> values before registering this task definition.",
+
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/sideops-ecs-execution-role",
+  "taskRoleArn":      "arn:aws:iam::<ACCOUNT_ID>:role/sideops-build-task-role",
+
+  "containerDefinitions": [
+    {
+      "name": "build-worker",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/sideops-build-worker:latest",
+      "essential": true,
+
+      "environment": [
+        { "name": "NODE_ENV",         "value": "production" },
+        { "name": "AWS_REGION",       "value": "<AWS_REGION>" },
+        { "name": "S3_BUCKET",        "value": "<S3_BUCKET_NAME>" },
+        { "name": "ECS_TASK_MODE",    "value": "true" },
+        { "name": "WORKER_CONCURRENCY", "value": "1" }
+      ],
+
+      "secrets": [
+        {
+          "name":      "REDIS_URL",
+          "valueFrom": "arn:aws:secretsmanager:<AWS_REGION>:<ACCOUNT_ID>:secret:sideops/redis-url"
+        }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group":         "/ecs/sideops-build-worker",
+          "awslogs-region":        "<AWS_REGION>",
+          "awslogs-stream-prefix": "build"
+        }
+      },
+
+      "stopTimeout": 120,
+
+      "readonlyRootFilesystem": false,
+      "privileged": false
+    }
+  ]
+}

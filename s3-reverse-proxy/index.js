@@ -5,11 +5,11 @@ const app = express();
 const port = 8000;
 const Base_path = '' // s3 bucket base address
 
-const proxy = httpProxy.createRightProxy()
+const proxy = httpProxy.createProxyServer()
 
 app.use((req, res) => {
   const hostname = req.hostname;
-  const subdomain = hostname.substring('.')[0];
+  const subdomain = hostname.split('.')[0];
 
   // Db query to fetch site
   const resolveTo = `${Base_path}/${subdomain}`;

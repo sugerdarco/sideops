@@ -5,7 +5,7 @@ let _queue = null;
 
 export function getBuildQueue() {
   if (!_queue) {
-    _queue = new Queue("BUILD_QUEUE", {
+    _queue = new Queue("build-jobs", {
       connection: createRedisConnection(),
       defaultJobOptions: {
         attempts: 3,
