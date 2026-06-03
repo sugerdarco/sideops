@@ -1,18 +1,24 @@
-FROM ubuntu:latest
+# Stage 1: install deps 
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json .
+RUN npm install --omit=dev
 
-RUN apt-get update
-RUN apt-get install curl -y
-RUN curl -sL https://deb.nodesource.com/setup_20.x | bash -
-RUN apt-get upgrade -y
-RUN apt-get install nodejs -y
+# Stage 2: runtime 
+FROM node:20-alpine
+WORKDIR /app
 
-WORKDIR /home/app
-COPY main.sh main.sh
-COPY index.js index.js
-COPY package*.json .
+# git for cloning; pnpm + yarn so the builder can use any package manager
+RUN apk add --no-cache git && \
+    npm install -g pnpm yarn --prefer-offline
 
-RUN npm install
-RUN chmod +x main.sh
-RUN chmod +x index.js
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json .
+COPY src ./src
 
-ENTRYPOINT ["/home/app/main.sh"]
+ENV NODE_ENV=production
+
+# AWS credentials come from the ECS IAM Task Role at runtime — never baked in.
+# For local dev, pass AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY via env file.
+
+CMD ["node", "src/index.js"]
