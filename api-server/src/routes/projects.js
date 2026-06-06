@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
-import { createProject, getProject, listProjects, setProjectStatus } from "../lib/store";
-import { getBuildQueue } from "../lib/queue";
-import { getSubcriber } from "../lib/redis";
+import { createProject, getProject, listProjects, setProjectStatus } from "../lib/store.js";
+import { getBuildQueue } from "../lib/queue.js";
+import { getSubcriber } from "../lib/redis.js";
 
 export const projectsRouter = Router();
 

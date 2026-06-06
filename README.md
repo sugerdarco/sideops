@@ -4,51 +4,71 @@ A self-hosted deployment platform that lets you ship any GitHub repo to a public
 
 ## How It Works
 
-Sideops is built around three independent services that talk through Redis:
+Sideops is built around four independent services that talk through Redis:
 
 ```
-User / Frontend
-      │
-      ▼
- api-server  ──(BullMQ job)──▶  build-server
-  :3001                              │
-      │                         clone → build → upload to S3
-      │◀───── Redis Pub/Sub ─────────┘
-      │        (logs + status)
-      ▼
-s3-reverse-proxy
-  :8000
-  Routes <projectId>.yourdomain.com → S3 bucket path
+         Frontend (React + Vite)
+              :5173
+                │
+                ▼
+           api-server  ──(BullMQ job)──▶  build-server
+            :3001                              │
+                │                         clone → build → upload to S3
+                │◀───── Redis Pub/Sub ─────────┘
+                │        (logs + status)
+                ▼
+         s3-reverse-proxy
+            :8080
+            Routes <projectId>.yourdomain.com → S3 bucket path
 ```
 
-1. **api-server** accepts a GitHub URL, queues a build job, and streams live logs back to the browser over SSE.
-2. **build-server** pulls the repo, detects the package manager, runs the build, and uploads the `dist/` folder to S3 under `/<projectId>/dist/`.
-3. **s3-reverse-proxy** sits in front of S3 and routes requests by subdomain — `abc123.yourdomain.com` proxies to `s3://your-bucket/abc123/dist/`.
+1. **frontend** is a React + Vite single-page app where users paste a GitHub URL, trigger builds, and watch live logs via SSE.
+2. **api-server** accepts a GitHub URL, queues a build job, and streams live logs back to the browser over SSE.
+3. **build-server** pulls the repo, detects the package manager, runs the build, and uploads the output folder to S3 under `/<projectId>/dist/`.
+4. **s3-reverse-proxy** sits in front of S3 and routes requests by subdomain — `abc123.yourdomain.com` proxies to `s3://your-bucket/abc123/dist/`.
 
 ## Project Structure
 
 ```
 sideops/
-├── api-server/          # REST API + SSE log streaming
+├── api-server/              # REST API + SSE log streaming
 │   └── src/
-│       ├── index.js     # Express app entry point
-│       ├── routes/      # /projects routes
-│       └── lib/         # Redis, BullMQ queue, in-memory store
-├── build-server/        # BullMQ worker: clone → build → upload
+│       ├── index.js         # Express app entry point
+│       ├── routes/
+│       │   └── projects.js  # /projects routes
+│       └── lib/
+│           ├── queue.js     # BullMQ queue wrapper
+│           ├── redis.js     # Redis connection helpers
+│           └── store.js     # In-memory project store
+├── build-server/            # BullMQ worker: clone → build → upload
 │   └── src/
-│       ├── index.js     # Worker entry point
-│       ├── builder.js   # git clone + npm/pnpm/yarn build
-│       ├── uploader.js  # S3 streaming upload
-│       └── publisher.js # Redis Pub/Sub log + status events
-└── s3-reverse-proxy/    # Subdomain-based S3 reverse proxy
-    └── index.js
+│       ├── index.js         # Worker entry point
+│       ├── builder.js       # git clone + npm/pnpm/yarn build
+│       ├── uploader.js      # S3 streaming upload
+│       └── publisher.js     # Redis Pub/Sub log + status events
+├── frontend/                # React + Vite UI
+│   ├── src/
+│   │   ├── App.jsx          # Main application component
+│   │   ├── main.jsx         # Vite entry point
+│   │   ├── components/      # LogViewer, StatusBadge
+│   │   ├── hooks/           # useBuild hook
+│   │   └── lib/             # API client (fetch + EventSource)
+│   ├── nginx.conf           # Production nginx config
+│   └── vite.config.js
+├── s3-reverse-proxy/        # Subdomain-based S3 reverse proxy
+│   └── index.js
+├── infra/                   # AWS deployment helpers
+│   ├── ecs-task-definition.json
+│   └── iam-policies.txt
+├── quick-test-everything.sh # One-command local dev setup script
+└── quick-start.md           # Step-by-step setup guide
 ```
 
 ## Prerequisites
 
 - Node.js 20+
 - Redis (local or managed)
-- AWS account with an S3 bucket
+- S3-compatible object storage (AWS S3, MinIO, Cloudflare R2)
 - (Optional) Docker
 
 ## Environment Variables
@@ -66,18 +86,40 @@ sideops/
 
 Copy `build-server/.env.sample` to `build-server/.env` and fill in:
 
-| Variable                  | Description                              |
-|---------------------------|------------------------------------------|
-| `REDIS_URL`               | Redis connection string                  |
-| `AWS_REGION`              | S3 bucket region (e.g. `us-east-1`)     |
-| `AWS_ACCESS_KEY_ID`       | Local dev only — use IAM role in ECS     |
-| `AWS_SECRET_ACCESS_KEY`   | Local dev only — use IAM role in ECS     |
-| `S3_BUCKET`               | Target S3 bucket name                    |
-| `WORKER_CONCURRENCY`      | Parallel builds (default: `2`)           |
+| Variable                  | Default                  | Description                                      |
+|---------------------------|--------------------------|--------------------------------------------------|
+| `REDIS_URL`               | `redis://localhost:6379` | Redis connection string                          |
+| `AWS_REGION`              | `us-east-1`             | S3 bucket region                                 |
+| `AWS_ACCESS_KEY_ID`       |                          | Local dev only — use IAM role in ECS             |
+| `AWS_SECRET_ACCESS_KEY`   |                          | Local dev only — use IAM role in ECS             |
+| `S3_BUCKET`               |                          | Target S3 bucket name                            |
+| `S3_ENDPOINT`             |                          | Custom S3 endpoint (for MinIO, R2, etc.)         |
+| `S3_FORCE_PATH_STYLE`     | `false`                  | Set `true` for MinIO / path-style endpoints      |
+| `WORKER_CONCURRENCY`      | `2`                      | Parallel builds (local worker mode)              |
+| `ECS_TASK_MODE`           | `false`                  | Set `true` on ECS — process one job then exit    |
 
 ### s3-reverse-proxy
 
-Set `Base_path` in `s3-reverse-proxy/index.js` to your S3 bucket base URL (e.g. `https://your-bucket.s3.amazonaws.com`).
+Copy `s3-reverse-proxy/.env.sample` to `s3-reverse-proxy/.env` and fill in:
+
+| Variable       | Default | Description                                             |
+|----------------|---------|---------------------------------------------------------|
+| `S3_BASE_URL`  |         | Full base URL to your storage (see examples below)      |
+| `PORT`         | `8080`  | HTTP port                                               |
+
+`S3_BASE_URL` examples:
+- **MinIO**: `http://localhost:9000/sideops`
+- **AWS S3**: `https://<bucket>.s3.<region>.amazonaws.com`
+- **Cloudflare R2**: `https://<accountid>.r2.cloudflarestorage.com/<bucket>`
+
+### frontend
+
+Copy `frontend/.env.example` to `frontend/.env`:
+
+| Variable           | Default                  | Description                        |
+|--------------------|--------------------------|------------------------------------|
+| `VITE_API_URL`     | `http://localhost:3001`  | API server URL                     |
+| `VITE_BASE_DOMAIN` | `localhost:8080`         | Domain used to build deployed URLs |
 
 ## Running Locally
 
@@ -85,25 +127,53 @@ Set `Base_path` in `s3-reverse-proxy/index.js` to your S3 bucket base URL (e.g. 
 # 1. Start Redis
 docker run -p 6379:6379 redis:alpine
 
-# 2. api-server
+# 2. api-server (port 3001)
 cd api-server
 npm install
 cp .env.sample .env   # edit as needed
-node src/index.js
+npm run dev            # uses --watch for auto-reload
 
-# 3. build-server
+# 3. build-server (BullMQ worker)
 cd build-server
 npm install
-cp .env.sample .env   # add AWS creds + S3 bucket
-node src/index.js
+cp .env.sample .env   # add S3 config (see env table above)
+npm run dev
 
-# 4. s3-reverse-proxy
+# 4. s3-reverse-proxy (port 8080)
 cd s3-reverse-proxy
 npm install
-node index.js
+cp .env.sample .env   # set S3_BASE_URL
+npm run dev
+
+# 5. frontend (port 5173)
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
 ```
 
+### Quick Start Script
+
+For a fully automated local setup (Redis + MinIO + all services), use the included script:
+
+```bash
+./quick-test-everything.sh --storage minio --redis local
+```
+
+See [quick-start.md](quick-start.md) for detailed setup instructions including MinIO and AWS deployment.
+
 ## API Reference
+
+### `GET /health`
+
+Health check endpoint.
+
+**Response `200`**
+```json
+{ "ok": true, "ts": 1717680000000 }
+```
+
+---
 
 ### `POST /projects`
 
@@ -170,8 +240,10 @@ The build-server is designed to run as an ECS task:
 - Attach an IAM Task Role with `s3:PutObject` on your bucket — no access keys needed in production.
 - The Dockerfile uses a two-stage build: deps install in one stage, only the production `node_modules` and `src/` are copied into the final image.
 
+See [quick-start.md](quick-start.md) for full AWS ECS Fargate deployment steps.
+
 ## Known Limitations
 
 - The in-memory project store in `api-server` resets on restart. Replace `src/lib/store.js` with a Postgres-backed implementation for persistence.
 - Only GitHub HTTPS URLs are supported (`https://github.com/user/repo`).
-- Build output must land in a `dist/` directory (auto-detected from `package.json`, falls back to `dist/`).
+- Build output is auto-detected from these directories (first match wins): `dist`, `out`, `build`, `next`, `public`.

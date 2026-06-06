@@ -21,9 +21,9 @@ connection.on('error', (err) => console.error('[redis]', err.message));
 const worker = new Worker(
     QUEUE_NAME,
     async (job) => {
-        const { projectId, gitUrl } = job.data;
-        console.log(`[worker] job=${job.id} project=${projectId} url=${gitUrl}`);
-        await runBuild({ projectId, gitUrl });
+        const { projectId, gitURL } = job.data;
+        console.log(`[worker] job=${job.id} project=${projectId} url=${gitURL}`);
+        await runBuild({ projectId, gitUrl: gitURL });
     },
     {
         connection,
